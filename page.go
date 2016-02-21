@@ -1,3 +1,5 @@
+// Package page provides low-level types and functions for managing data pages and records.
+// Writing pages to disk is left to other packages.
 package page
 
 import (
@@ -7,104 +9,116 @@ import (
 )
 
 const (
-	PAGE_SIZE = uint16(4096)
+	PAGE_SIZE = uint16(4096) // PAGE_SIZE is typically the same as the filesystem blocksize
 )
 
+type pageid uint64
+
 type Page struct {
-	bytes            []byte // bytes contains all the data in the page, including header fields, free space and the records
-	recordCountBytes []byte
-	freePointerBytes []byte
-	recordTableBytes []byte
+	id          pageid // 0:8
+	prevId      pageid // 8:16
+	nextId      pageid // 16:24
+	recordCount uint16 // 24:26
+	freePointer uint16 // 26:28
+
+	header      []byte
+	recordTable []byte
+	bytes       []byte // bytes contains all the data in the page, including header fields, free space and the records
+
 }
 
+// NewPage returns a new page of size page.PAGE_SIZE
 func NewPage() *Page {
 	page := &Page{
 		bytes: make([]byte, PAGE_SIZE),
 	}
-	page.recordCountBytes = page.bytes[0:2]
-	page.setRecordCount(0)
-	page.freePointerBytes = page.bytes[2:4]
-	//fmt.Printf("capacity fp %d\n", cap(page.freePointerBytes))
-	page.setFreePointer(PAGE_SIZE)
-	page.recordTableBytes = page.bytes[4:4]
-	//fmt.Printf("rt cap %d len %d\n", cap(page.recordTableBytes), len(page.recordTableBytes))
+	page.header = page.bytes[0:28]
+	page.recordTable = page.bytes[28:28]
+	page.freePointer = PAGE_SIZE
 	return page
 }
 
+// MarshalBinary implements the encoding.BinaryMarshaler interface.
+// The page is encoded as a []byte PAGE_SIZE long, ready for serialisation.
 func (page *Page) MarshalBinary() ([]byte, error) {
-	result := make([]byte, len(page.bytes))
-	copy(result, page.bytes)
-	return result, nil
+
+	binary.LittleEndian.PutUint64(page.header[0:8], uint64(page.id))
+	binary.LittleEndian.PutUint64(page.header[8:16], uint64(page.prevId))
+	binary.LittleEndian.PutUint64(page.header[16:24], uint64(page.nextId))
+	binary.LittleEndian.PutUint16(page.header[24:26], page.recordCount)
+	binary.LittleEndian.PutUint16(page.header[26:28], page.freePointer)
+
+	return page.bytes, nil
 }
 
+// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface.
+// PAGE_SIZE bytes are used to rehydrate the page.
 func (page *Page) UnmarshalBinary(data []byte) error {
-	page.bytes = make([]byte, len(data))
+
+	page.bytes = make([]byte, PAGE_SIZE, PAGE_SIZE)
 	copy(page.bytes, data)
-	page.recordCountBytes = page.bytes[0:2]
-	page.freePointerBytes = page.bytes[2:4]
-	page.recordTableBytes = page.bytes[4 : page.GetRecordCount()*4]
+
+	page.header = page.bytes[0:28]
+
+	page.id = pageid(binary.LittleEndian.Uint64(page.header[0:8]))
+	page.prevId = pageid(binary.LittleEndian.Uint64(page.header[8:16]))
+	page.nextId = pageid(binary.LittleEndian.Uint64(page.header[16:24]))
+	page.recordCount = binary.LittleEndian.Uint16(page.header[24:26])
+	page.freePointer = binary.LittleEndian.Uint16(page.header[26:28])
+
+	page.recordTable = page.bytes[28 : page.recordCount*4]
+
 	return nil
 }
 
-func (page *Page) setRecordCount(recordCount uint16) {
-	binary.LittleEndian.PutUint16(page.recordCountBytes, uint16(recordCount))
-	return
-}
-
+// GetRecordCount returns the number of records held in page.
 func (page *Page) GetRecordCount() uint16 {
-	return binary.LittleEndian.Uint16(page.recordCountBytes)
-}
-
-func (page *Page) setFreePointer(freePointer uint16) {
-	binary.LittleEndian.PutUint16(page.freePointerBytes, freePointer)
-}
-
-func (page *Page) getFreePointer() uint16 {
-	return binary.LittleEndian.Uint16(page.freePointerBytes)
+	return page.recordCount
 }
 
 func (page *Page) setRecordTable(recordNumber uint16, offset uint16, recLen uint16) error {
 	tableOffset := recordNumber * 4
 	// resize recordTable
-	len := len(page.recordTableBytes)
-	page.recordTableBytes = page.recordTableBytes[0 : len+4] // add two more uint16 == 4 bytes
-	binary.LittleEndian.PutUint16(page.recordTableBytes[tableOffset:tableOffset+2], offset)
-	binary.LittleEndian.PutUint16(page.recordTableBytes[tableOffset+2:tableOffset+4], recLen)
+	len := len(page.recordTable)
+	page.recordTable = page.recordTable[0 : len+4] // add two more uint16 == 4 bytes
+	binary.LittleEndian.PutUint16(page.recordTable[tableOffset:tableOffset+2], offset)
+	binary.LittleEndian.PutUint16(page.recordTable[tableOffset+2:tableOffset+4], recLen)
 	return nil
 }
 
-// Return the amount of free space available to store a record (inclusive of any header field)
-func (page *Page) GetFreeSpace() int16 {
-	return int16(page.getFreePointer()) - 2 - int16(page.GetRecordCount()*4) - 4 // free pointer - 4 bytes header fields - #records * 4 bytes per table entry - another table entry
+// GetFreeSpace return the amount of free space available to store a record (inclusive of any header fields.)
+func (page *Page) GetFreeSpace() uint16 {
+	return uint16(page.freePointer) - 2 - uint16(page.recordCount*4) - 4 // free pointer - 4 bytes header fields - #records * 4 bytes per table entry - another table entry
 }
 
+// AddRecord adds record to page, using copy semantics.
+// Returns an error if insufficient page free space.
 func (page *Page) AddRecord(record []byte) (uint16, error) {
 	recLen := uint16(len(record))
-	//fmt.Println(page.GetFreeSpace())
-	if int16(recLen) > page.GetFreeSpace() {
+	if uint16(recLen) > page.GetFreeSpace() {
 		return 0, errors.New("Record length exceeds free space")
 	}
-	freePointer := page.getFreePointer()
 
-	offset := freePointer - recLen
-	copy(page.bytes[offset:freePointer], record)
-	page.setFreePointer(offset)
-	recordNumber := page.GetRecordCount() // NB 0-based
-	page.setRecordCount(recordNumber + 1)
+	offset := page.freePointer - recLen
+	copy(page.bytes[offset:page.freePointer], record)
+	page.freePointer = offset
+	recordNumber := page.recordCount // NB 0-based
+	page.recordCount += 1
 	page.setRecordTable(recordNumber, offset, recLen)
 	return recordNumber, nil
 }
 
+// GetRecord returns record specified by recordNumber.
+// Note: record numbers are 0 based.
 func (page *Page) GetRecord(recordNumber uint16) ([]byte, error) {
 	// recordNumber is 0 based
-	recordCount := page.GetRecordCount()
-	if recordNumber+1 > recordCount {
-		return nil, errors.New(fmt.Sprintf("Invalid record number: %d, record count: %d", recordNumber, recordCount))
+	if recordNumber+1 > page.recordCount {
+		return nil, errors.New(fmt.Sprintf("Invalid record number: %d, record count: %d", recordNumber, page.recordCount))
 	}
 	tableOffset := recordNumber * 4
-	offset := binary.LittleEndian.Uint16(page.recordTableBytes[tableOffset : tableOffset+2])
-	len := binary.LittleEndian.Uint16(page.recordTableBytes[tableOffset+2 : tableOffset+4])
-	record := make([]byte, len)
+	offset := binary.LittleEndian.Uint16(page.recordTable[tableOffset : tableOffset+2])
+	len := binary.LittleEndian.Uint16(page.recordTable[tableOffset+2 : tableOffset+4])
+	record := make([]byte, len, len)
 	copy(record, page.bytes[offset:offset+len])
 	return record, nil
 }
