@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	PAGE_SIZE = uint16(4096) // PAGE_SIZE is typically the same as the filesystem blocksize
+	PAGE_SIZE              = uint16(4096) // PAGE_SIZE is typically the same as the filesystem blocksize
+	HEADER_LEN             = 28           // bytes
+	RECORD_TABLE_ENTRY_LEN = 4            // bytes
 )
 
 type pageid uint64
@@ -32,8 +34,8 @@ func NewPage() *Page {
 	page := &Page{
 		bytes: make([]byte, PAGE_SIZE),
 	}
-	page.header = page.bytes[0:28]
-	page.recordTable = page.bytes[28:28]
+	page.header = page.bytes[0:HEADER_LEN]
+	page.recordTable = page.bytes[HEADER_LEN:HEADER_LEN]
 	page.freePointer = PAGE_SIZE
 	return page
 }
@@ -58,7 +60,7 @@ func (page *Page) UnmarshalBinary(data []byte) error {
 	page.bytes = make([]byte, PAGE_SIZE, PAGE_SIZE)
 	copy(page.bytes, data)
 
-	page.header = page.bytes[0:28]
+	page.header = page.bytes[0:HEADER_LEN]
 
 	page.id = pageid(binary.LittleEndian.Uint64(page.header[0:8]))
 	page.prevId = pageid(binary.LittleEndian.Uint64(page.header[8:16]))
@@ -66,7 +68,7 @@ func (page *Page) UnmarshalBinary(data []byte) error {
 	page.recordCount = binary.LittleEndian.Uint16(page.header[24:26])
 	page.freePointer = binary.LittleEndian.Uint16(page.header[26:28])
 
-	page.recordTable = page.bytes[28 : 28+page.recordCount*4]
+	page.recordTable = page.bytes[HEADER_LEN : HEADER_LEN+page.recordCount*4]
 
 	return nil
 }
@@ -88,7 +90,7 @@ func (page *Page) setRecordTable(recordNumber uint16, offset uint16, recLen uint
 
 // GetFreeSpace return the amount of free space available to store a record (inclusive of any header fields.)
 func (page *Page) GetFreeSpace() uint16 {
-	return uint16(page.freePointer) - 28 - uint16(page.recordCount*4) - 4 // free pointer - 28 bytes header fields - #records * 4 bytes per table entry - another table entry
+	return uint16(page.freePointer) - HEADER_LEN - uint16(page.recordCount*RECORD_TABLE_ENTRY_LEN) - RECORD_TABLE_ENTRY_LEN // free pointer - 28 bytes header fields - #records * 4 bytes per table entry - another table entry
 }
 
 // AddRecord adds record to page, using copy semantics.
