@@ -3,6 +3,7 @@ package page
 import (
 	"bytes"
 	"testing"
+	"fmt"
 )
 
 //func TestHeaderFields(t *testing.T) {
@@ -39,6 +40,7 @@ func TestFillPage(t *testing.T) {
 		} else if read, err := page.GetRecord(recordNumber); err != nil {
 			t.Fatalf("page.GetRecord, err: %s", err)
 		} else if bytes.Compare(record, read) != 0 {
+			fmt.Printf("i: %d, page %t\n", i, page)
 			t.Errorf("bytes.Compare: expected %t, got %t", record, read)
 			break
 		}

@@ -66,7 +66,7 @@ func (page *Page) UnmarshalBinary(data []byte) error {
 	page.recordCount = binary.LittleEndian.Uint16(page.header[24:26])
 	page.freePointer = binary.LittleEndian.Uint16(page.header[26:28])
 
-	page.recordTable = page.bytes[28 : page.recordCount*4]
+	page.recordTable = page.bytes[28 : 28+page.recordCount*4]
 
 	return nil
 }
@@ -88,7 +88,7 @@ func (page *Page) setRecordTable(recordNumber uint16, offset uint16, recLen uint
 
 // GetFreeSpace return the amount of free space available to store a record (inclusive of any header fields.)
 func (page *Page) GetFreeSpace() uint16 {
-	return uint16(page.freePointer) - 2 - uint16(page.recordCount*4) - 4 // free pointer - 4 bytes header fields - #records * 4 bytes per table entry - another table entry
+	return uint16(page.freePointer) - 28 - uint16(page.recordCount*4) - 4 // free pointer - 28 bytes header fields - #records * 4 bytes per table entry - another table entry
 }
 
 // AddRecord adds record to page, using copy semantics.

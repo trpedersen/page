@@ -45,7 +45,8 @@ func main() {
 				fmt.Println(err)
 			} else {
 				//fmt.Println(page)
-				for i := uint16(0); i < 10; i++ { //page.GetRecordCount(); i++ {
+				fmt.Printf("record count: %d\n", page.GetRecordCount())
+				for i := uint16(0); i < page.GetRecordCount(); i++ {
 					var record []byte
 					record, err = page.GetRecord(i)
 					if err != nil {

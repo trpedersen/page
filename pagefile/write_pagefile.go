@@ -11,10 +11,10 @@ import (
 
 func makePage() *page.Page {
 	page := page.NewPage()
-	recLen := int16(10)
+	recLen := uint16(10)
 	for i := 0; page.GetFreeSpace() > recLen; i++ {
 		record := make([]byte, recLen)
-		for j := int16(0); j < recLen; j++ {
+		for j := uint16(0); j < recLen; j++ {
 			record[j] = byte(i)
 		}
 		if _, err := page.AddRecord(record); err != nil {
